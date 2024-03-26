@@ -329,7 +329,7 @@ class CustomInstallHeaders(Command):
 
     def run(self):
         install_cmd = self.get_finalized_command('install')
-        self.install_dir = getattr(install_cmd, 'build_lib')
+        self.install_dir = getattr(install_cmd, 'install_lib')
         # Monkey patching logic
         headers = self.distribution.headers
         if not headers:
@@ -775,12 +775,12 @@ class WinBuildExt(build_ext):
 # of willy-nilly
 from setuptools import Command
 from setuptools.command.install_lib import install_lib
-@add_command('install_data')
-class smart_install_data(install_lib):
-    def run(self):
-        install_cmd = self.get_finalized_command('install')
-        self.install_dir = getattr(install_cmd, 'install_lib')
-        install_lib.run(self)
+# @add_command('install_data')
+# class smart_install_data(install_lib):
+#     def run(self):
+#         install_cmd = self.get_finalized_command('install')
+#         self.install_dir = getattr(install_cmd, 'install_lib')
+#         install_lib.run(self)
 
 @add_command('sdist')
 class OurSdist(Command):
