@@ -72,6 +72,66 @@ import os
 
 # just import these always and fail early if not present
 from setuptools import setup
+import distutils
+
+
+if os.environ.get('PYGAME_DETECT_AVX2', '') != '':
+    import distutils.ccompiler
+
+    avx2_filenames = ['simd_blitters_avx2']
+
+    compiler_options = {
+        'unix': ('-mavx2',),
+        'msvc': ('/arch:AVX2',)
+    }
+
+    def spawn(self, cmd, **kwargs):
+        should_use_avx2 = False
+        # try to be thorough in detecting that we are on a platform that potentially supports AVX2
+        machine_name = platform.machine()
+        if ((machine_name.startswith(("x86", "i686")) or
+            machine_name.lower() == "amd64") and
+                os.environ.get("MAC_ARCH") != "arm64"):
+            should_use_avx2 = True
+
+        if should_use_avx2:
+            extra_options = compiler_options.get(self.compiler_type)
+            if extra_options is not None:
+                # filenames are closer to the end of command line
+                for argument in reversed(cmd):
+                    # Check if argument contains a filename. We must check for all
+                    # possible extensions; checking for target extension is faster.
+                    if not argument.endswith(self.obj_extension):
+                        continue
+
+                    # check for a filename only to avoid building a new string
+                    # with variable extension
+                    for filename in avx2_filenames:
+                        off_end = -len(self.obj_extension)
+                        off_start = -len(filename) + off_end
+                        if argument.endswith(filename, off_start, off_end):
+                            if self.compiler_type == 'bcpp':
+                                # Borland accepts a source file name at the end,
+                                # insert the options before it
+                                cmd[-1:-1] = extra_options
+                            else:
+                                cmd += extra_options
+
+                    # filename is found, no need to search any further
+                    break
+
+        distutils.ccompiler.spawn(cmd, dry_run=self.dry_run, **kwargs)
+
+    distutils.ccompiler.CCompiler.__spawn = distutils.ccompiler.CCompiler.spawn
+    distutils.ccompiler.CCompiler.spawn = spawn
+
+# A (bit hacky) fix for https://github.com/pygame/pygame/issues/2613
+# This is due to the fact that distutils uses command line args to 
+# export PyInit_* functions on windows, but those functions are already exported
+# and that is why compiler gives warnings
+from distutils.command.build_ext import build_ext
+
+build_ext.get_export_symbols = lambda self, ext: []
 
 IS_PYPY = '__pypy__' in sys.builtin_module_names
 IS_MSC = sys.platform == "win32" and "MSC" in sys.version
@@ -251,9 +311,11 @@ if consume_arg('-auto'):
     AUTO_CONFIG = True
 
 import os.path, glob, stat, shutil
-import sysconfig
-from setuptools import setup, Command
+import distutils.sysconfig
+from distutils.core import setup, Command
 from distutils.extension import read_setup_file
+from distutils.command.install_data import install_data
+from distutils.command.sdist import sdist
 
 revision = ''
 
@@ -299,55 +361,36 @@ else:
         # 'dependency_links': ['http://rene.f0o.com/~rene/stuff/macosx/']
     })
 
-# required. This will be filled if doing a Windows build.
-cmdclass = {}
-
-
-def add_command(name):
-    def decorator(command):
-        assert issubclass(command, Command)
-        cmdclass[name] = command
-        return command
-
-    return decorator
-
 # headers to install
 headers = glob.glob(os.path.join('src_c', '*.h'))
 headers.remove(os.path.join('src_c', 'scale.h'))
 headers.append(os.path.join('src_c', 'include'))
 
-@add_command('install_headers')
-class CustomInstallHeaders(Command):
-    description = "Custom install headers command"
-    user_options = []
+import distutils.command.install_headers
 
-    def initialize_options(self):
-        pass
 
-    def finalize_options(self):
-        pass
+# monkey patch distutils header install to copy over directories
+def run_install_headers(self):
+    headers = self.distribution.headers
+    if not headers:
+        return
 
-    def run(self):
-        install_cmd = self.get_finalized_command('install')
-        self.install_dir = getattr(install_cmd, 'build_lib')
-        # Monkey patching logic
-        headers = self.distribution.headers
-        if not headers:
-            return
+    self.mkpath(self.install_dir)
+    for header in headers:
+        if os.path.isdir(header):
+            destdir = os.path.join(self.install_dir, os.path.basename(header))
+            self.mkpath(destdir)
+            for entry in os.listdir(header):
+                header1 = os.path.join(header, entry)
+                if not os.path.isdir(header1):
+                    (out, _) = self.copy_file(header1, destdir)
+                    self.outfiles.append(out)
+        else:
+            (out, _) = self.copy_file(header, self.install_dir)
+            self.outfiles.append(out)
 
-        self.mkpath(self.install_dir)
-        for header in headers:
-            if os.path.isdir(header):
-                destdir = os.path.join(self.install_dir, os.path.basename(header))
-                self.mkpath(destdir)
-                for entry in os.listdir(header):
-                    header1 = os.path.join(header, entry)
-                    if not os.path.isdir(header1):
-                        (out, _) = self.copy_file(header1, destdir)
-                        #self.outfiles.append(out)
-            else:
-                (out, _) = self.copy_file(header, self.install_dir)
-                #self.outfiles.append(out)
+
+distutils.command.install_headers.install_headers.run = run_install_headers
 
 # option for not installing the headers.
 if consume_arg("-noheaders"):
@@ -445,7 +488,7 @@ if not have_font and have_freetype:
     shutil.copyfile(os.path.join('src_py', 'ftfont.py'), alternate_font)
 
 # extra files to install
-data_path = os.path.join(sysconfig.get_paths()['purelib'], 'pygame')
+data_path = os.path.join(distutils.sysconfig.get_python_lib(), 'pygame')
 pygame_data_files = []
 data_files = [('pygame', pygame_data_files)]
 
@@ -569,9 +612,24 @@ def write_version_module(pygame_version, revision):
 
 write_version_module(METADATA['version'], revision)
 
+# required. This will be filled if doing a Windows build.
+cmdclass = {}
+
+
+def add_command(name):
+    def decorator(command):
+        assert issubclass(command, distutils.cmd.Command)
+        cmdclass[name] = command
+        return command
+
+    return decorator
+
 
 # try to find DLLs and copy them too  (only on windows)
 if sys.platform == 'win32' and not 'WIN32_DO_NOT_INCLUDE_DEPS' in os.environ:
+
+    from distutils.command.build_ext import build_ext
+
     # add dependency DLLs to the project
     lib_dependencies = {}
     for e in extensions:
@@ -653,7 +711,7 @@ if sys.platform == 'win32' and not 'WIN32_DO_NOT_INCLUDE_DEPS' in os.environ:
         """
         Adapted from here: https://github.com/pybind/python_example/blob/master/setup.py#L37
         """
-        from setuptools.errors import CompileError
+        from distutils.errors import CompileError
         import tempfile
         root_drive = os.path.splitdrive(sys.executable)[0] + '\\'
         with tempfile.NamedTemporaryFile('w', suffix='.cpp', delete=False) as f:
@@ -684,6 +742,27 @@ if sys.platform == 'win32' and not 'WIN32_DO_NOT_INCLUDE_DEPS' in os.environ:
 
 
     if IS_MSC:
+        @add_command('build_ext')
+        class WinBuildExt(build_ext):
+            """This build_ext sets necessary environment variables for MinGW"""
+
+            # __sdl_lib_dir is possible location of msvcrt replacement import
+            # libraries, if they exist. Pygame module base only links to SDL so
+            # should have the SDL library directory as its only -L option.
+            for e in extensions:
+                if e.name == 'base':
+                    __sdl_lib_dir = e.library_dirs[0].replace('/', os.sep)
+                    break
+
+            def build_extensions(self):
+                # Add supported optimisations flags to reduce code size with MSVC
+                opts = flag_filter(self.compiler, "/GF", "/Gy")
+                for extension in extensions:
+                    extension.extra_compile_args += opts
+
+                build_ext.build_extensions(self)
+
+
         # Add the precompiled smooth scale MMX functions to transform.
         def replace_scale_mmx():
             for e in extensions:
@@ -710,103 +789,31 @@ for e in extensions[:]:
     else:
         e.name = 'pygame.' + e.name  # prepend package name on modules
 
-#custom build_ext command for windows msc and avx2
-from setuptools.command.build_ext import build_ext
-avx2_filenames = ['simd_blitters_avx2']
-
-compiler_options = {
-    'unix': ('-mavx2',),
-    'msvc': ('/arch:AVX2',)
-}
-
-@add_command('build_ext')
-class WinBuildExt(build_ext):
-    if sys.platform == 'win32' and not 'WIN32_DO_NOT_INCLUDE_DEPS' in os.environ:
-        if IS_MSC:
-            """This build_ext sets necessary environment variables for MinGW"""
-
-            # __sdl_lib_dir is possible location of msvcrt replacement import
-            # libraries, if they exist. Pygame module base only links to SDL so
-            # should have the SDL library directory as its only -L option.
-            for e in extensions:
-                if e.name == 'base':
-                    __sdl_lib_dir = e.library_dirs[0].replace('/', os.sep)
-                    break
-
-    def build_extensions(self):
-        # win MSC
-        if sys.platform == 'win32' and not 'WIN32_DO_NOT_INCLUDE_DEPS' in os.environ:
-            if IS_MSC:
-                # Add supported optimisations flags to reduce code size with MSVC
-                opts = flag_filter(self.compiler, "/GF", "/Gy")
-                for extension in extensions:
-                    extension.extra_compile_args += opts
-        
-        # AVX2
-        if os.environ.get('PYGAME_DETECT_AVX2', '') != '':
-            should_use_avx2 = False
-            machine_name = platform.machine()
-            if ((machine_name.startswith(("x86", "i686")) or
-                machine_name.lower() == "amd64") and
-                    os.environ.get("MAC_ARCH") != "arm64"):
-                should_use_avx2 = True
-
-            # If AVX2 is enabled, add compiler options accordingly
-            if should_use_avx2:
-                for ext in self.extensions:
-                    if any(filename in ext.sources for filename in avx2_filenames):
-                        if self.compiler.compiler_type in compiler_options:
-                            ext.extra_compile_args.extend(compiler_options[self.compiler.compiler_type])
-
-        build_ext.build_extensions(self)
-
-    # A (bit hacky) fix for https://github.com/pygame/pygame/issues/2613
-    # This is due to the fact that distutils uses command line args to 
-    # export PyInit_* functions on windows, but those functions are already exported
-    # and that is why compiler gives warnings
-    def get_export_symbols(self, ext):
-        """
-        Override the get_export_symbols method to return an empty list.
-        """
-        return []
 
 # data installer with improved intelligence over distutils
 # data files are copied into the project directory instead
 # of willy-nilly
-from setuptools import Command
-from setuptools.command.install_lib import install_lib
 @add_command('install_data')
-class smart_install_data(install_lib):
+class smart_install_data(install_data):
     def run(self):
+        # need to change self.install_dir to the actual library dir
         install_cmd = self.get_finalized_command('install')
         self.install_dir = getattr(install_cmd, 'install_lib')
-        install_lib.run(self)
+        return install_data.run(self)
+
 
 @add_command('sdist')
-class OurSdist(Command):
-    description = "custom sdist command"
-
+class OurSdist(sdist):
     def initialize_options(self):
-        pass
-
-    def finalize_options(self):
-        pass
-
-    def run(self):
-        template_path = os.path.join('buildconfig', 'MANIFEST.in')
-        with open(template_path, 'r') as f:
-            template_content = f.read()
-
-        with open('MANIFEST.in', 'w') as f:
-            f.write(template_content)
-        
-        self.run_command('sdist')
+        sdist.initialize_options(self)
+        # we do not want MANIFEST.in to appear in the root cluttering up things.
+        self.template = os.path.join('buildconfig', 'MANIFEST.in')
 
 
 if "bdist_msi" in sys.argv:
     # if you are making an msi, we want it to overwrite files
     # we also want to include the repository revision in the file name
-    from setuptools.command import bdist_msi
+    from distutils.command import bdist_msi
     import msilib
 
 
