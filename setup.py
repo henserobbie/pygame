@@ -773,14 +773,22 @@ class WinBuildExt(build_ext):
 # data installer with improved intelligence over distutils
 # data files are copied into the project directory instead
 # of willy-nilly
-from setuptools import Command
-from setuptools.command.install_lib import install_lib
+# from setuptools.command.install_lib import install_lib
 # @add_command('install_data')
 # class smart_install_data(install_lib):
 #     def run(self):
 #         install_cmd = self.get_finalized_command('install')
 #         self.install_dir = getattr(install_cmd, 'install_lib')
 #         install_lib.run(self)
+from distutils.command.install_data import install_data
+@add_command('install_data')
+class smart_install_data(install_data):
+    def run(self):
+        # need to change self.install_dir to the actual library dir
+        install_cmd = self.get_finalized_command('install')
+        self.install_dir = getattr(install_cmd, 'install_lib')
+        return install_data.run(self)
+
 
 @add_command('sdist')
 class OurSdist(Command):
