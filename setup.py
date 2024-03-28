@@ -15,56 +15,6 @@ with open('README.rst', encoding='utf-8') as readme:
 
 EXTRAS = {}
 
-METADATA = {
-    "name": "pygame",
-    "version": "2.6.0.dev1",
-    "license": "LGPL",
-    "url": "https://www.pygame.org",
-    "author": "A community project.",
-    "author_email": "pygame@pygame.org",
-    "description": "Python Game Development",
-    "long_description": LONG_DESCRIPTION,
-    "long_description_content_type": "text/x-rst",
-    "project_urls": {
-        "Documentation": "https://pygame.org/docs",
-        "Bug Tracker": "https://github.com/pygame/pygame/issues",
-        "Source": "https://github.com/pygame/pygame",
-        "Twitter": "https://twitter.com/pygame_org",
-    },
-    "classifiers": [
-        "Development Status :: 6 - Mature",
-        "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)",
-        "Programming Language :: Assembly",
-        "Programming Language :: C",
-        "Programming Language :: Cython",
-        "Programming Language :: Objective C",
-        "Programming Language :: Python",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Programming Language :: Python :: Implementation :: CPython",
-        "Programming Language :: Python :: Implementation :: PyPy",
-        "Topic :: Games/Entertainment",
-        "Topic :: Multimedia :: Sound/Audio",
-        "Topic :: Multimedia :: Sound/Audio :: MIDI",
-        "Topic :: Multimedia :: Sound/Audio :: Players",
-        "Topic :: Multimedia :: Graphics",
-        "Topic :: Multimedia :: Graphics :: Capture :: Digital Camera",
-        "Topic :: Multimedia :: Graphics :: Capture :: Screen Capture",
-        "Topic :: Multimedia :: Graphics :: Graphics Conversion",
-        "Topic :: Multimedia :: Graphics :: Viewers",
-        "Operating System :: Microsoft :: Windows",
-        "Operating System :: POSIX",
-        "Operating System :: Unix",
-        "Operating System :: MacOS",
-    ],
-    "python_requires": '>=3.6',
-}
 
 import re
 import sys
