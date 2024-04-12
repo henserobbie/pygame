@@ -11,7 +11,7 @@ import re
 import sysconfig
 import shutil
 import stat
-from setuptools import setup, Command
+from setuptools import setup, Command, Extension
 
 METADATA = {'version': "2.6.0.dev1"}
 revision = ''
@@ -74,6 +74,57 @@ def add_command(name):
         return command
 
     return decorator
+
+def read_setup_file(filename):
+    """Read a Setup-like file and return a list of Extension instances."""
+    extensions = []
+    with open(filename) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' in line:
+                # Skip empty lines, comments, and VAR=VALUE lines
+                continue
+
+            words = line.split()
+            module_name = words[0]
+            ext = Extension(module_name, [])
+            parse_next_as = None
+
+            for word in words[1:]:
+                if parse_next_as:
+                    getattr(ext, parse_next_as).append(word)
+                    parse_next_as = None
+                    continue
+
+                suffix = os.path.splitext(word)[1]
+                if suffix in (".c", ".cc", ".cpp", ".cxx", ".c++", ".m", ".mm"):
+                    ext.sources.append(word)
+                elif word.startswith("-I"):
+                    ext.include_dirs.append(word[2:])
+                elif word.startswith("-D"):
+                    macro = word[2:].split('=', 1)
+                    if len(macro) == 1:
+                        macro.append(None)
+                    ext.define_macros.append(tuple(macro))
+                elif word.startswith("-U"):
+                    ext.undef_macros.append(word[2:])
+                elif word.startswith("-l"):
+                    ext.libraries.append(word[2:])
+                elif word.startswith("-L"):
+                    ext.library_dirs.append(word[2:])
+                elif word.startswith("-R"):
+                    ext.runtime_library_dirs.append(word[2:])
+                elif word in ["-Xlinker", "-Xcompiler"]:
+                    parse_next_as = 'extra_link_args' if word == '-Xlinker' else 'extra_compile_args'
+                elif word.startswith("-"):
+                    ext.extra_compile_args.append(word)
+                else:
+                    # Handle other cases like extra objects or link args
+                    ext.extra_objects.append(word)
+
+            extensions.append(ext)
+
+    return extensions
 
 
 """
@@ -236,7 +287,7 @@ if no_compilation:
 else:
     # get compile info for all extensions
     try:
-        from distutils.extension import read_setup_file
+        
         extensions = read_setup_file('Setup')
     except:
         print("""Error with the "Setup" file,
