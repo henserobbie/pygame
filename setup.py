@@ -71,9 +71,60 @@ import sys
 import os
 
 # just import these always and fail early if not present
-from setuptools import setup
+from setuptools import setup, Extension
 import distutils
 
+#Utility to replace distuitl read_setup
+def read_setup_file(filename):
+    """Read a Setup-like file and return a list of Extension instances."""
+    extensions = []
+    with open(filename) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' in line:
+                # Skip empty lines, comments, and VAR=VALUE lines
+                continue
+
+            words = line.split()
+            module_name = words[0]
+            ext = Extension(module_name, [])
+            parse_next_as = None
+
+            for word in words[1:]:
+                if parse_next_as:
+                    getattr(ext, parse_next_as).append(word)
+                    parse_next_as = None
+                    continue
+
+                suffix = os.path.splitext(word)[1]
+                if suffix in (".c", ".cc", ".cpp", ".cxx", ".c++", ".m", ".mm"):
+                    ext.sources.append(word)
+                elif word.startswith("-I"):
+                    ext.include_dirs.append(word[2:])
+                elif word.startswith("-D"):
+                    macro = word[2:].split('=', 1)
+                    if len(macro) == 1:
+                        macro.append(None)
+                    ext.define_macros.append(tuple(macro))
+                elif word.startswith("-U"):
+                    ext.undef_macros.append(word[2:])
+                elif word.startswith("-l"):
+                    ext.libraries.append(word[2:])
+                elif word.startswith("-L"):
+                    ext.library_dirs.append(word[2:])
+                elif word.startswith("-R"):
+                    ext.runtime_library_dirs.append(word[2:])
+                elif word in ["-Xlinker", "-Xcompiler"]:
+                    parse_next_as = 'extra_link_args' if word == '-Xlinker' else 'extra_compile_args'
+                elif word.startswith("-"):
+                    ext.extra_compile_args.append(word)
+                else:
+                    # Handle other cases like extra objects or link args
+                    ext.extra_objects.append(word)
+
+            extensions.append(ext)
+
+    return extensions
 
 if os.environ.get('PYGAME_DETECT_AVX2', '') != '':
     import distutils.ccompiler
@@ -313,7 +364,6 @@ if consume_arg('-auto'):
 import os.path, glob, stat, shutil
 import distutils.sysconfig
 from distutils.core import setup, Command
-from distutils.extension import read_setup_file
 from distutils.command.install_data import install_data
 from distutils.command.sdist import sdist
 
